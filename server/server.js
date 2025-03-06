@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
@@ -10,7 +11,12 @@ const io = new Server(server, {
 });
 
 // Serve static files from the client folder
-app.use(express.static('client'));
+app.use(express.static(path.join(__dirname, '../client')));
+
+// Serve index.html for the root path
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '../client/index.html'));
+});
 
 const players = {};
 

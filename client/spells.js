@@ -1,13 +1,7 @@
 import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.min.js';
 
-/* ==============================
-   Global Array for Spell Effects
-   ============================== */
 export const spells = [];
 
-/* ==============================
-   Base Spell Class (with cast time/channel support and mana cost)
-   ============================== */
 export class Spell {
     constructor({ name, range, cooldown, castTime = 0, channel = false, manaCost = 0, effect }) {
         this.name = name;
@@ -24,14 +18,11 @@ export class Spell {
         return currentTime - this.lastCast >= this.cooldown;
     }
 
-    // For spells with cast time, we delay mana deduction until cast completes.
     cast(caster, currentTime) {
-        // Check if the spell is off cooldown.
         if (!this.canCast(currentTime)) {
             console.log(`${this.name} is on cooldown.`);
             return false;
         }
-        // For spells with a cast time, check mana but don't deduct until completion.
         if (this.castTime > 0) {
             if (caster.currentlyCasting) {
                 console.log(`${caster.type} is already casting.`);
@@ -41,21 +32,17 @@ export class Spell {
                 console.log(`Not enough mana for ${this.name}`);
                 return false;
             }
-            // Special case: Innovation (channel spell) – it will restore mana to max if completed.
-            if (this.name === "Innovation") {
-                // For Innovation, we don't subtract mana at cast start.
-            }
             caster.currentlyCasting = {
                 spell: this,
                 startTime: currentTime,
                 castTime: this.castTime,
                 channel: this.channel,
-                manaCost: this.manaCost
+                manaCost: this.manaCost,
+                lastManaRestoreTime: currentTime
             };
             console.log(`Started casting ${this.name} for ${caster.type} (${this.castTime} ms)`);
             return true;
         } else {
-            // Instant cast: subtract mana immediately.
             if (this.manaCost > 0) {
                 caster.mana -= this.manaCost;
             }
@@ -67,20 +54,19 @@ export class Spell {
     }
 }
 
-// Function to update an ongoing cast; call each frame.
 export function updateCasting(caster, currentTime) {
     if (caster.currentlyCasting) {
         const elapsed = currentTime - caster.currentlyCasting.startTime;
-        // For Innovation, we restore mana gradually and then at completion, set mana to max.
         if (caster.currentlyCasting.spell.name === "Innovation") {
-            // Gradual restoration could be implemented here if desired.
+            if (currentTime - caster.currentlyCasting.lastManaRestoreTime >= 1000) {
+                let restoreAmount = caster.maxMana / 8;
+                caster.mana = Math.min(caster.maxMana, caster.mana + restoreAmount);
+                caster.currentlyCasting.lastManaRestoreTime = currentTime;
+                console.log("Innovation: restored mana, current mana:", caster.mana);
+            }
         }
         if (elapsed >= caster.currentlyCasting.castTime) {
-            // For Innovation, if the cast completes, restore mana fully.
-            if (caster.currentlyCasting.spell.name === "Innovation") {
-                caster.mana = caster.maxMana;
-            } else if (caster.currentlyCasting.manaCost > 0) {
-                // For other spells, subtract mana cost on completion.
+            if (caster.currentlyCasting.spell.name !== "Innovation" && caster.currentlyCasting.manaCost > 0) {
                 if (caster.mana >= caster.currentlyCasting.manaCost) {
                     caster.mana -= caster.currentlyCasting.manaCost;
                 } else {
@@ -89,10 +75,12 @@ export function updateCasting(caster, currentTime) {
                     return;
                 }
             }
+            if (caster.currentlyCasting.spell.name === "Innovation") {
+                caster.mana = caster.maxMana;
+            }
             caster.currentlyCasting.spell.lastCast = currentTime;
             caster.currentlyCasting.spell.effect(caster);
             console.log(`${caster.currentlyCasting.spell.name} cast by ${caster.type} completed.`);
-            // For Innovation, remove the aura.
             if (caster.currentlyCasting.spell.name === "Innovation" && caster.innovationAura) {
                 caster.mesh.remove(caster.innovationAura);
                 caster.innovationAura = null;
@@ -102,10 +90,9 @@ export function updateCasting(caster, currentTime) {
     }
 }
 
-/* ==============================
-   Mage Spells
-   ============================== */
-// 1. Fireball – 2 sec cast; orange sphere.
+// ---- Mage Spells ----
+
+// Fireball: 2s cast; damage + DOT; homes in on target if selected.
 export class FireballSpell extends Spell {
     constructor() {
         super({
@@ -116,19 +103,20 @@ export class FireballSpell extends Spell {
             channel: false,
             manaCost: 20,
             effect: (caster) => {
-                if (!caster.mesh) { console.error("Caster has no mesh"); return; }
+                if (!caster.mesh) return;
                 const geometry = new THREE.SphereGeometry(0.2, 8, 8);
                 const material = new THREE.MeshStandardMaterial({ color: 0xff4500 });
                 const fireball = new THREE.Mesh(geometry, material);
                 fireball.position.copy(caster.mesh.position);
-                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(caster.mesh.quaternion);
-                fireball.userData = {
-                    velocity: forward.multiplyScalar(0.2),
-                    damage: 10,
-                    dot: 5,
-                    dotDuration: 4000,
-                    type: 'fireball'
-                };
+                // If there's a target, set it; otherwise, use default direction.
+                if (window.currentTarget) {
+                    fireball.userData.target = window.currentTarget;
+                }
+                fireball.userData.velocity = new THREE.Vector3(0, 0, -1).applyQuaternion(caster.mesh.quaternion).multiplyScalar(0.2);
+                fireball.userData.damage = 10;
+                fireball.userData.dot = 5;
+                fireball.userData.dotDuration = 5000;
+                fireball.userData.type = 'fireball';
                 spells.push(fireball);
                 if (typeof window.scene !== 'undefined') {
                     window.scene.add(fireball);
@@ -138,7 +126,7 @@ export class FireballSpell extends Spell {
     }
 }
 
-// 2. Frost Bolt – 1.5 sec cast; blue sphere.
+// Frost Bolt: 1.5s cast; damage + 30% slow for 8s; homes in on target if selected.
 export class FrostBoltSpell extends Spell {
     constructor() {
         super({
@@ -149,19 +137,19 @@ export class FrostBoltSpell extends Spell {
             channel: false,
             manaCost: 15,
             effect: (caster) => {
-                if (!caster.mesh) { console.error("Caster has no mesh"); return; }
+                if (!caster.mesh) return;
                 const geometry = new THREE.SphereGeometry(0.2, 8, 8);
                 const material = new THREE.MeshStandardMaterial({ color: 0xadd8e6 });
                 const frostbolt = new THREE.Mesh(geometry, material);
                 frostbolt.position.copy(caster.mesh.position);
-                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(caster.mesh.quaternion);
-                frostbolt.userData = {
-                    velocity: forward.multiplyScalar(0.2),
-                    damage: 8,
-                    slowAmount: 0.5,
-                    slowDuration: 3000,
-                    type: 'frostbolt'
-                };
+                if (window.currentTarget) {
+                    frostbolt.userData.target = window.currentTarget;
+                }
+                frostbolt.userData.velocity = new THREE.Vector3(0, 0, -1).applyQuaternion(caster.mesh.quaternion).multiplyScalar(0.2);
+                frostbolt.userData.damage = 8;
+                frostbolt.userData.slowAmount = 0.3;
+                frostbolt.userData.slowDuration = 8000;
+                frostbolt.userData.type = 'frostbolt';
                 spells.push(frostbolt);
                 if (typeof window.scene !== 'undefined') {
                     window.scene.add(frostbolt);
@@ -171,7 +159,7 @@ export class FrostBoltSpell extends Spell {
     }
 }
 
-// 3. Frost Nova – Instant; ring expands outward.
+// Frost Nova: Instant; AOE freeze for 8s.
 export class FrostNovaSpell extends Spell {
     constructor() {
         super({
@@ -182,13 +170,21 @@ export class FrostNovaSpell extends Spell {
             channel: false,
             manaCost: 25,
             effect: (caster) => {
-                if (!caster.mesh) { console.error("Caster has no mesh"); return; }
+                if (!caster.mesh) return;
+                const freezeRadius = 5;
+                // Check if target is within freezeRadius:
+                if (window.currentTarget && caster.mesh.position.distanceTo(window.currentTarget.position) <= freezeRadius) {
+                    window.currentTarget.userData.freezeUntil = Date.now() + 8000;
+                    window.currentTarget.material.color.set(0xadd8e6);
+                    setTimeout(() => {
+                        window.currentTarget.material.color.set(0xff0000);
+                        window.currentTarget.userData.freezeUntil = null;
+                    }, 8000);
+                }
+                // Create an expanding ring visual effect.
                 const geometry = new THREE.RingGeometry(0.5, 0.6, 32);
                 const material = new THREE.MeshBasicMaterial({
-                    color: 0xadd8e6,
-                    side: THREE.DoubleSide,
-                    transparent: true,
-                    opacity: 0.7
+                    color: 0xadd8e6, side: THREE.DoubleSide, transparent: true, opacity: 0.7
                 });
                 const ring = new THREE.Mesh(geometry, material);
                 ring.position.copy(caster.mesh.position);
@@ -211,7 +207,7 @@ export class FrostNovaSpell extends Spell {
     }
 }
 
-// 4. Innovation – 8 sec channel; aura active during channel and restores mana to max on completion.
+// Innovation: 8s channel; every second, restore maxMana/8; on completion, mana full.
 export class InnovationSpell extends Spell {
     constructor() {
         super({
@@ -222,9 +218,7 @@ export class InnovationSpell extends Spell {
             channel: true,
             manaCost: 0,
             effect: (caster) => {
-                // When the channel finishes, set mana to max.
-                caster.mana = caster.maxMana;
-                console.log('Innovation channel completed: Mana fully restored.');
+                console.log('Innovation channel complete.');
             }
         });
     }
@@ -239,25 +233,21 @@ export class InnovationSpell extends Spell {
                 console.log(`${caster.type} is already casting.`);
                 return false;
             }
-            // Immediately add aura to indicate channeling.
-            const geometry = new THREE.SphereGeometry(1.5, 16, 16);
-            const material = new THREE.MeshBasicMaterial({
-                color: 0x800080,
-                transparent: true,
-                opacity: 0.5
-            });
-            const aura = new THREE.Mesh(geometry, material);
-            aura.position.set(0, 0, 0);
-            caster.mesh.add(aura);
-            caster.innovationAura = aura;
-
             caster.currentlyCasting = {
                 spell: this,
                 startTime: currentTime,
                 castTime: this.castTime,
                 channel: this.channel,
-                manaCost: this.manaCost
+                manaCost: this.manaCost,
+                lastManaRestoreTime: currentTime
             };
+            // Add an aura for visual feedback.
+            const geometry = new THREE.SphereGeometry(1.5, 16, 16);
+            const material = new THREE.MeshBasicMaterial({ color: 0x800080, transparent: true, opacity: 0.5 });
+            const aura = new THREE.Mesh(geometry, material);
+            aura.position.set(0, 0, 0);
+            caster.mesh.add(aura);
+            caster.innovationAura = aura;
             console.log(`Started casting ${this.name} for ${caster.type} (${this.castTime} ms)`);
             return true;
         } else {
@@ -269,7 +259,7 @@ export class InnovationSpell extends Spell {
     }
 }
 
-// 5. Sheep – 2 sec cast; transforms target.
+// Sheep: 2s cast; if target selected, transform it to a small cube ("sheep") with random movement for 8s.
 export class SheepSpell extends Spell {
     constructor() {
         super({
@@ -280,174 +270,29 @@ export class SheepSpell extends Spell {
             channel: false,
             manaCost: 30,
             effect: (caster) => {
-                console.log('Sheep cast: target transformed into a sheep for 7 seconds (damage breaks effect).');
+                if (window.currentTarget) {
+                    console.log('Sheep cast: target transformed into a sheep for 8 seconds.');
+                    window.currentTarget.scale.set(0.5, 0.5, 0.5);
+                    window.currentTarget.material.color.set(0xffffff);
+                    window.currentTarget.userData.sheepVelocity = new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.05,
+                        0,
+                        (Math.random() - 0.5) * 0.05
+                    );
+                    setTimeout(() => {
+                        window.currentTarget.scale.set(1, 1, 1);
+                        window.currentTarget.material.color.set(0xff0000);
+                        window.currentTarget.userData.sheepVelocity = null;
+                    }, 8000);
+                } else {
+                    console.log('Sheep cast: no target selected.');
+                }
             }
         });
     }
 }
 
-/* ==============================
-   Warrior Spells (Instant)
-   ============================== */
-// 1. Charge
-export class ChargeSpell extends Spell {
-    constructor() {
-        super({
-            name: 'Charge',
-            range: 8,
-            cooldown: 5000,
-            castTime: 0,
-            channel: false,
-            manaCost: 0,
-            effect: (caster) => {
-                console.log('Charge cast: target stunned for 2 seconds.');
-            }
-        });
-    }
-}
-
-// 2. Thunderclap
-export class ThunderclapSpell extends Spell {
-    constructor() {
-        super({
-            name: 'Thunderclap',
-            range: 8,
-            cooldown: 6000,
-            castTime: 0,
-            channel: false,
-            manaCost: 0,
-            effect: (caster) => {
-                console.log('Thunderclap cast: AoE damage and slow applied.');
-            }
-        });
-    }
-}
-
-// 3. Hamstring
-export class HamstringSpell extends Spell {
-    constructor() {
-        super({
-            name: 'Hamstring',
-            range: 8,
-            cooldown: 4000,
-            castTime: 0,
-            channel: false,
-            manaCost: 0,
-            effect: (caster) => {
-                console.log('Hamstring cast: target slowed and damaged.');
-            }
-        });
-    }
-}
-
-// 4. Berserk
-export class BerserkSpell extends Spell {
-    constructor() {
-        super({
-            name: 'Berserk',
-            range: 0,
-            cooldown: 10000,
-            castTime: 0,
-            channel: false,
-            manaCost: 0,
-            effect: (caster) => {
-                console.log('Berserk cast: increased attack power and speed for 8 seconds.');
-            }
-        });
-    }
-}
-
-// 5. Heroic Strike
-export class HeroicStrikeSpell extends Spell {
-    constructor() {
-        super({
-            name: 'Heroic Strike',
-            range: 8,
-            cooldown: 3000,
-            castTime: 0,
-            channel: false,
-            manaCost: 0,
-            effect: (caster) => {
-                console.log('Heroic Strike cast: deals high damage.');
-            }
-        });
-    }
-}
-
-/* ==============================
-   Hunter Spells (Instant)
-   ============================== */
-// 1. Slow Shot
-export class SlowShotSpell extends Spell {
-    constructor() {
-        super({
-            name: 'Slow Shot',
-            range: 20,
-            cooldown: 4000,
-            castTime: 0,
-            channel: false,
-            manaCost: 0,
-            effect: (caster) => {
-                console.log('Slow Shot cast: target slowed.');
-            }
-        });
-    }
-}
-
-// 2. Poison Shot
-export class PoisonShotSpell extends Spell {
-    constructor() {
-        super({
-            name: 'Poison Shot',
-            range: 20,
-            cooldown: 5000,
-            castTime: 0,
-            channel: false,
-            manaCost: 0,
-            effect: (caster) => {
-                console.log('Poison Shot cast: target afflicted with DOT for 8 seconds.');
-            }
-        });
-    }
-}
-
-// 3. Feint Death – 1 minute channel.
-export class FeintDeathSpell extends Spell {
-    constructor() {
-        super({
-            name: 'Feint Death',
-            range: 0,
-            cooldown: 60000,
-            castTime: 60000,
-            channel: true,
-            manaCost: 0,
-            effect: (caster) => {
-                console.log('Feint Death cast: hunter is untargetable while channeling.');
-            }
-        });
-    }
-}
-
-// 4. Ice Trap
-export class IceTrapSpell extends Spell {
-    constructor() {
-        super({
-            name: 'Ice Trap',
-            range: 20,
-            cooldown: 10000,
-            castTime: 0,
-            channel: false,
-            manaCost: 0,
-            effect: (caster) => {
-                console.log('Ice Trap cast: trap placed, will freeze target on trigger.');
-            }
-        });
-    }
-}
-
-/* ==============================
-   Character Classes
-   ============================== */
+// Character & Mage classes
 export class Character {
     constructor(type, mesh = null) {
         this.type = type;
@@ -482,30 +327,19 @@ export class Mage extends Character {
     }
 }
 
+// Warrior and Hunter classes remain unchanged for now.
 export class Warrior extends Character {
     constructor(mesh = null) {
         super('Warrior', mesh);
-        this.spells.push(new ChargeSpell());
-        this.spells.push(new ThunderclapSpell());
-        this.spells.push(new HamstringSpell());
-        this.spells.push(new BerserkSpell());
-        this.spells.push(new HeroicStrikeSpell());
     }
 }
-
 export class Hunter extends Character {
     constructor(mesh = null) {
         super('Hunter', mesh);
-        this.spells.push(new SlowShotSpell());
-        this.spells.push(new PoisonShotSpell());
-        this.spells.push(new FeintDeathSpell());
-        this.spells.push(new IceTrapSpell());
     }
 }
 
-/* ==============================
-   UI Functions for HP, Mana, Cast Bar, and Spell Bar
-   ============================== */
+// ------------------ UI FUNCTIONS ------------------
 export function createUI() {
     // HP Bar (top left)
     const hpContainer = document.createElement('div');
@@ -580,7 +414,6 @@ export function createUI() {
     spellBarContainer.style.zIndex = '1000';
     document.body.appendChild(spellBarContainer);
 
-    // Create a square for each spell in the Mage's spell list.
     if (window.magePlayer) {
         window.magePlayer.spells.forEach((spell, index) => {
             const spellDiv = document.createElement('div');
@@ -595,7 +428,6 @@ export function createUI() {
             spellDiv.style.justifyContent = 'center';
             spellDiv.style.backgroundColor = '#333';
 
-            // Label showing key number and spell name
             const label = document.createElement('div');
             label.innerText = `${index + 1}: ${spell.name}`;
             label.style.color = '#fff';
@@ -604,7 +436,6 @@ export function createUI() {
             label.style.pointerEvents = 'none';
             spellDiv.appendChild(label);
 
-            // Cooldown overlay
             const cooldownOverlay = document.createElement('div');
             cooldownOverlay.className = 'cooldownOverlay';
             cooldownOverlay.style.position = 'absolute';
@@ -663,3 +494,47 @@ export function updateSpellBar(character, currentTime) {
         }
     });
 }
+
+export function createTargetUI() {
+    if (document.getElementById('targetContainer')) return;
+    const targetContainer = document.createElement('div');
+    targetContainer.id = 'targetContainer';
+    targetContainer.style.position = 'absolute';
+    targetContainer.style.top = '10px';
+    targetContainer.style.left = '220px';
+    targetContainer.style.width = '200px';
+    targetContainer.style.height = '40px';
+    targetContainer.style.backgroundColor = '#333';
+    targetContainer.style.border = '2px solid #fff';
+    targetContainer.style.zIndex = '1000';
+    document.body.appendChild(targetContainer);
+
+    const targetHp = document.createElement('div');
+    targetHp.id = 'targetHp';
+    targetHp.style.height = '20px';
+    targetHp.style.width = '100%';
+    targetHp.style.backgroundColor = '#f00';
+    targetContainer.appendChild(targetHp);
+
+    const targetMana = document.createElement('div');
+    targetMana.id = 'targetMana';
+    targetMana.style.height = '20px';
+    targetMana.style.width = '100%';
+    targetMana.style.backgroundColor = '#00f';
+    targetContainer.appendChild(targetMana);
+}
+
+export function updateTargetUI(target) {
+    const targetHp = document.getElementById('targetHp');
+    const targetMana = document.getElementById('targetMana');
+    if (targetHp && targetMana) {
+        const hp = target.userData.hp || 100;
+        const maxHp = target.userData.maxHp || 100;
+        const mana = target.userData.mana || 100;
+        const maxMana = target.userData.maxMana || 100;
+        targetHp.style.width = (hp / maxHp * 100) + '%';
+        targetMana.style.width = (mana / maxMana * 100) + '%';
+    }
+}
+
+
