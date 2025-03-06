@@ -12,7 +12,7 @@ import {
     updateTargetUI
 } from './spells.js';
 
-// ------------------ POPUP FUNCTION ------------------
+// ------------------ HELPER: Popup Message ------------------
 function showPopup(message) {
     const popup = document.createElement('div');
     popup.innerText = message;
@@ -23,31 +23,30 @@ function showPopup(message) {
     popup.style.color = '#fff';
     popup.style.fontSize = '24px';
     popup.style.padding = '10px';
-    popup.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    popup.style.backgroundColor = 'rgba(0,0,0,0.7)';
     popup.style.borderRadius = '5px';
     popup.style.zIndex = '2000';
     document.body.appendChild(popup);
-
     let opacity = 1;
     let yOffset = 0;
-    const fadeInterval = setInterval(() => {
+    const interval = setInterval(() => {
         opacity -= 0.02;
         yOffset -= 1;
         popup.style.opacity = opacity;
         popup.style.transform = `translate(-50%, calc(-50% + ${yOffset}px))`;
         if (opacity <= 0) {
-            clearInterval(fadeInterval);
+            clearInterval(interval);
             popup.remove();
         }
     }, 30);
 }
 
-// ------------------ HELPER: Check if Facing Target ------------------
+// ------------------ HELPER: Check if Mage is Facing Target ------------------
 function isFacingTarget(casterMesh, targetMesh) {
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(casterMesh.quaternion).normalize();
     const toTarget = new THREE.Vector3().subVectors(targetMesh.position, casterMesh.position).normalize();
     const angle = forward.angleTo(toTarget);
-    return angle < Math.PI / 6; // 30 degrees threshold
+    return angle < Math.PI / 6; // within 30 degrees
 }
 
 // ------------------ SOCKET SETUP ------------------
@@ -93,7 +92,7 @@ const mageMesh = new THREE.Mesh(mageGeometry, mageMaterial);
 mageMesh.position.set(0, 1, 0);
 scene.add(mageMesh);
 
-// Add Front Marker ("F")
+// Front Marker ("F")
 function createFrontMarker() {
     const canvas = document.createElement('canvas');
     canvas.width = 64;
@@ -116,21 +115,23 @@ mageMesh.add(createFrontMarker());
 const magePlayer = new Mage(mageMesh);
 window.magePlayer = magePlayer;
 
-// ------------------ DUMMY ENEMY ------------------
+// ------------------ DUMMY ENEMY (with automatic movement) ------------------
 const enemyGeometry = new THREE.BoxGeometry(1, 2, 1);
 const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
 const enemyMesh = new THREE.Mesh(enemyGeometry, enemyMaterial);
 enemyMesh.position.set(5, 1, 0);
 enemyMesh.userData = { hp: 100, maxHp: 100, mana: 100, maxMana: 100 };
+// Set initial random velocity for dummy enemy
+enemyMesh.userData.velocity = new THREE.Vector3((Math.random() - 0.5) * 0.05, 0, (Math.random() - 0.5) * 0.05);
 scene.add(enemyMesh);
 let currentTarget = null;
-window.currentTarget = currentTarget; // So spells.js can reference
+window.currentTarget = currentTarget;
 
 // ------------------ UI ------------------
 createUI();
 
 // ------------------ CAMERA & MANUAL OVERRIDE VARIABLES ------------------
-let playerYaw = 0;       // Mage facing angle (radians)
+let playerYaw = 0;       // Mage's facing angle (radians)
 let cameraYaw = playerYaw;
 let cameraPitch = 0;
 const pitchLimit = Math.PI / 3;
@@ -154,15 +155,15 @@ document.addEventListener('mousemove', (event) => {
             isDragging = true;
         }
         manualCameraYaw -= event.movementX * 0.002;
-        manualCameraPitch += event.movementY * 0.002; // Inverted up/down: dragging up increases pitch.
+        manualCameraPitch += event.movementY * 0.002; // dragging up increases pitch
         manualCameraPitch = Math.max(-pitchLimit, Math.min(manualCameraPitch, pitchLimit));
     }
 });
 document.addEventListener('mouseup', (event) => {
     if (event.button === 0) {
         leftMouseDown = false;
-        // Only treat as target selection if not dragging.
         if (!isDragging) {
+            // If not dragging, treat as target selection.
             const mouse = new THREE.Vector2(
                 (event.clientX / window.innerWidth) * 2 - 1,
                 -(event.clientY / window.innerHeight) * 2 + 1
@@ -176,9 +177,7 @@ document.addEventListener('mouseup', (event) => {
                 window.currentTarget = currentTarget;
                 createTargetUI();
                 enemyMesh.material.emissive = new THREE.Color(0x00ffff);
-                setTimeout(() => {
-                    enemyMesh.material.emissive = new THREE.Color(0x000000);
-                }, 500);
+                setTimeout(() => { enemyMesh.material.emissive = new THREE.Color(0x000000); }, 500);
             } else {
                 currentTarget = null;
                 window.currentTarget = null;
@@ -210,7 +209,6 @@ document.addEventListener('keyup', (event) => {
 });
 
 // ------------------ SPELL CASTING (Digits 1-5) ------------------
-const offensiveSpells = ['Fireball', 'Frost Bolt', 'Frost Nova'];
 document.addEventListener('keydown', (event) => {
     const currentTime = Date.now();
     let spellName = "";
@@ -221,8 +219,8 @@ document.addEventListener('keydown', (event) => {
         case 'Digit4': spellName = 'Innovation'; break;
         case 'Digit5': spellName = 'Sheep'; break;
     }
-    // For offensive spells, check that a target is selected and that the mage is facing the target.
-    if (offensiveSpells.includes(spellName)) {
+    // Only Fireball and Frost Bolt require facing the target.
+    if (spellName === 'Fireball' || spellName === 'Frost Bolt') {
         if (!window.currentTarget) {
             showPopup("No target selected!");
             return;
@@ -233,7 +231,8 @@ document.addEventListener('keydown', (event) => {
         }
     }
     magePlayer.castSpell(spellName, currentTime);
-    showPopup(`${spellName} cast!`);
+    // Optionally, you can show a popup for a successful cast:
+    // showPopup(`${spellName} cast!`);
 });
 
 // ------------------ WEBSOCKET EVENTS (Placeholders) ------------------
@@ -243,7 +242,7 @@ socket.on('updatePlayer', (data) => { });
 socket.on('removePlayer', (id) => { });
 socket.on('spellCast', (data) => { });
 
-// ---------- HELPER: Linear Interpolation ----------
+// ------------------ HELPER: Linear Interpolation ------------------
 function lerp(a, b, t) {
     return a + (b - a) * t;
 }
@@ -263,19 +262,39 @@ function animate() {
         magePlayer.currentlyCasting = null;
     }
 
-    // Update mage rotation: left/right keys rotate the mage.
+    // Update mage rotation (A/D keys rotate mage)
     if (move.left) { playerYaw += 0.03; }
     if (move.right) { playerYaw -= 0.03; }
     mageMesh.rotation.y = playerYaw;
 
-    // Move mage: Use forward vector = (0, 0, -1) (since "F" is at -Z).
+    // Move mage: W moves forward (in direction of front marker "F" which is -Z) and S moves backward.
     const forwardVec = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), playerYaw);
     if (move.forward) { mageMesh.position.add(forwardVec.clone().multiplyScalar(moveSpeed)); }
     if (move.backward) { mageMesh.position.add(forwardVec.clone().multiplyScalar(-moveSpeed)); }
 
-    // CAMERA CONTROL:
-    // If left mouse is held (manual override), use manual angles.
-    // Otherwise, if movement keys are pressed, smoothly snap camera back behind mage.
+    // ------------------ DUMMY ENEMY AUTO-MOVEMENT ------------------
+    // Change dummy enemy's velocity randomly every 2 seconds.
+    if (!enemyMesh.userData.nextMoveTime || currentTime > enemyMesh.userData.nextMoveTime) {
+        enemyMesh.userData.velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.05,
+            0,
+            (Math.random() - 0.5) * 0.05
+        );
+        enemyMesh.userData.nextMoveTime = currentTime + 2000;
+    }
+    // If enemy is slowed or frozen, modify its velocity accordingly.
+    if (enemyMesh.userData.freezeUntil && currentTime < enemyMesh.userData.freezeUntil) {
+        // Frozen: no movement.
+        enemyMesh.userData.velocity.set(0, 0, 0);
+    } else if (enemyMesh.userData.slowUntil && currentTime < enemyMesh.userData.slowUntil) {
+        enemyMesh.position.add(enemyMesh.userData.velocity.clone().multiplyScalar(0.3));
+    } else {
+        enemyMesh.position.add(enemyMesh.userData.velocity);
+    }
+
+    // ------------------ CAMERA CONTROL ------------------
+    // If left mouse is held, use manual camera angles.
+    // Otherwise, if movement keys are pressed, smoothly interpolate camera to default behind mage.
     if (!leftMouseDown && (move.forward || move.backward || move.left || move.right)) {
         cameraYaw = lerp(cameraYaw, playerYaw, 0.1);
         cameraPitch = lerp(cameraPitch, 0, 0.1);
@@ -283,24 +302,26 @@ function animate() {
         cameraYaw = manualCameraYaw;
         cameraPitch = manualCameraPitch;
     }
-    // Otherwise, maintain current cameraYaw/cameraPitch.
+    // Otherwise, maintain current angles.
 
-    // Position camera behind the mage.
+    // Position camera behind mage.
     camera.position.x = mageMesh.position.x + Math.sin(cameraYaw) * cameraOffsetDistance;
     camera.position.z = mageMesh.position.z + Math.cos(cameraYaw) * cameraOffsetDistance;
     camera.position.y = mageMesh.position.y + cameraHeightOffset + Math.sin(cameraPitch) * 2;
     camera.lookAt(mageMesh.position.x, mageMesh.position.y + 1, mageMesh.position.z);
 
-    // UI Updates
+    // ------------------ UI UPDATES ------------------
     updateUI(magePlayer);
     updateCastBar(magePlayer, currentTime);
     updateSpellBar(magePlayer, currentTime);
-    if (magePlayer.currentlyCasting) { updateCasting(magePlayer, currentTime); }
+    if (magePlayer.currentlyCasting) {
+        updateCasting(magePlayer, currentTime);
+    }
 
-    // Update active spells (projectiles)
+    // ------------------ ACTIVE SPELLS UPDATE ------------------
     for (let i = spells.length - 1; i >= 0; i--) {
         const spellObj = spells[i];
-        // Homing behavior: if projectile has a target, adjust its velocity toward target.
+        // Homing: if projectile has a target, adjust velocity toward it.
         if (spellObj.userData.target) {
             const direction = new THREE.Vector3().subVectors(spellObj.userData.target.position, spellObj.position).normalize();
             spellObj.userData.velocity.copy(direction.multiplyScalar(0.2));
@@ -308,35 +329,45 @@ function animate() {
         if (spellObj.userData.velocity) {
             spellObj.position.add(spellObj.userData.velocity);
         }
-        // Collision detection for Fireball & Frost Bolt
+        // Collision detection for offensive spells.
         if (spellObj.userData.target && spellObj.position.distanceTo(spellObj.userData.target.position) < 0.5) {
             if (spellObj.userData.type === 'fireball') {
                 console.log("Fireball hit target!");
                 spellObj.userData.target.userData.hp -= spellObj.userData.damage;
-                showPopup(`Fireball hit! -${spellObj.userData.damage} HP`);
-                // Start DOT on target (reduce HP every second for dotDuration)
+                showPopup(`Fireball: -${spellObj.userData.damage} HP`);
                 let dotTime = 0;
                 const dotInterval = setInterval(() => {
                     dotTime += 1000;
                     spellObj.userData.target.userData.hp -= spellObj.userData.dot;
                     showPopup(`DOT: -${spellObj.userData.dot} HP`);
-                    if (dotTime >= spellObj.userData.dotDuration) {
-                        clearInterval(dotInterval);
-                    }
+                    if (dotTime >= spellObj.userData.dotDuration) clearInterval(dotInterval);
                 }, 1000);
                 scene.remove(spellObj);
                 spells.splice(i, 1);
                 continue;
-            } else if (spellObj.userData.type === 'frostbolt') {
+            }
+            if (spellObj.userData.type === 'frostbolt') {
                 console.log("Frost Bolt hit target!");
                 spellObj.userData.target.userData.hp -= spellObj.userData.damage;
-                showPopup(`Frost Bolt hit! -${spellObj.userData.damage} HP`);
-                // Apply slow for 8 seconds.
+                showPopup(`Frost Bolt: -${spellObj.userData.damage} HP`);
                 spellObj.userData.target.userData.slowUntil = currentTime + 8000;
                 spellObj.userData.target.material.color.set(0xadd8e6);
                 setTimeout(() => {
                     spellObj.userData.target.material.color.set(0xff0000);
                     spellObj.userData.target.userData.slowUntil = null;
+                }, 8000);
+                scene.remove(spellObj);
+                spells.splice(i, 1);
+                continue;
+            }
+            if (spellObj.userData.type === 'frostnova') {
+                console.log("Frost Nova hit target!");
+                spellObj.userData.target.userData.hp -= 3; // small damage
+                spellObj.userData.target.userData.freezeUntil = currentTime + 8000;
+                spellObj.userData.target.material.color.set(0xadd8e6);
+                setTimeout(() => {
+                    spellObj.userData.target.material.color.set(0xff0000);
+                    spellObj.userData.target.userData.freezeUntil = null;
                 }, 8000);
                 scene.remove(spellObj);
                 spells.splice(i, 1);
@@ -349,10 +380,10 @@ function animate() {
         }
     }
 
-    // (Optional) Update target UI if a target is selected.
+    // ------------------ TARGET UI UPDATE ------------------
     if (currentTarget) { updateTargetUI(currentTarget); }
 
-    // Send player movement to server.
+    // ------------------ SEND MOVEMENT TO SERVER ------------------
     socket.emit('playerMove', {
         x: mageMesh.position.x,
         y: mageMesh.position.y,

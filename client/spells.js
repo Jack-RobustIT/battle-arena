@@ -98,7 +98,7 @@ export class FireballSpell extends Spell {
         super({
             name: 'Fireball',
             range: 18,
-            cooldown: 3000,
+            cooldown: 0,
             castTime: 2000,
             channel: false,
             manaCost: 20,
@@ -164,7 +164,7 @@ export class FrostNovaSpell extends Spell {
     constructor() {
         super({
             name: 'Frost Nova',
-            range: 8,
+            range: 30,
             cooldown: 5000,
             castTime: 0,
             channel: false,
